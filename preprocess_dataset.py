@@ -6,17 +6,32 @@ import soundfile as sf
 import numpy as np
 from einops import rearrange
 import tqdm as tqdm
+from typing import Union
+
 
 DATASET_HF = "blabble-io/libritts"
+# DATASET_HF = "/Users/donkeyddddd/Documents/Data/libritts_r"
 SAMPLE_RATE = 16000
 
 
+
+# python 3.10 can used
 def get_libritts_dataset(split, streaming=True) -> (Dataset | IterableDataset):
-    dataset = load_dataset(DATASET_HF, "all",
+    # dataset = load_dataset(DATASET_HF, "all",
+    #                        split=split, streaming=streaming)
+    dataset = load_dataset(DATASET_HF, "clean",
                            split=split, streaming=streaming)
     dataset = dataset.cast_column('audio', Audio(sampling_rate=SAMPLE_RATE))
     dataset = dataset.with_format('torch')
     return dataset
+
+
+# def get_libritts_dataset(split, streaming=True) -> Union[Dataset, IterableDataset]:
+#     dataset = load_dataset(DATASET_HF, "clean",
+#                            split=split, streaming=streaming)
+#     dataset = dataset.cast_column('audio', Audio(sampling_rate=SAMPLE_RATE))
+#     dataset = dataset.with_format('torch')
+#     return dataset
 
 
 class Hubert:
