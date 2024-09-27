@@ -61,7 +61,7 @@ class FeatureLoss(nn.Module):
         return loss
 
 
-class ReconstructionLoss(nn.Module):
+# class ReconstructionLoss(nn.Module):
     def __init__(self, sample_rate: int = 16_000, mel_bins=64, gradient_checkpointing: bool = False):
         super().__init__()
         self.sample_rate = sample_rate
@@ -98,6 +98,42 @@ class ReconstructionLoss(nn.Module):
 
             return l1_loss + alpha_s * l2_log_loss
         return custom_run
+    
+    def _calculate_for_scale(self):
+        def custom_run(original, generated, s_exp, mask_ratio):
+            s = 2 ** s_exp
+            n_fft = 2 ** 11
+            window_size = s
+            hop_length = int(s / 4)
+            mel_spectrogram = MelSpectrogram(
+                sample_rate=self.sample_rate,
+                win_length=window_size,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                n_mels=self.mel_bins
+            ).to(original.device)
+            orig_audio_spec = mel_spectrogram(original)
+            generated_audio_spec = mel_spectrogram(generated)
+
+            # Ensure all values are positive and greater than epsilon
+            orig_audio_spec = torch.clamp(orig_audio_spec, min=self.epsilon)
+            generated_audio_spec = torch.clamp(generated_audio_spec, min=self.epsilon)
+
+            alpha_s = torch.sqrt(torch.tensor(s) / 2).to(original.device)
+            l1_loss = torch.abs(orig_audio_spec - generated_audio_spec)
+            l1_loss = masked_mean_from_ratios(l1_loss, mask_ratio)
+
+            # Compute log loss safely
+            l2_log_loss = torch.pow(
+                torch.log(orig_audio_spec) - torch.log(generated_audio_spec), exponent=2
+            )
+            l2_log_loss = l2_log_loss.mean(dim=1, keepdim=True)
+            l2_log_loss = torch.sqrt(l2_log_loss)
+            l2_log_loss = masked_mean_from_ratios(l2_log_loss, mask_ratio)
+
+            return l1_loss + alpha_s * l2_log_loss
+
+        return custom_run
 
     def forward(self, original: torch.Tensor, generated: torch.Tensor, mask_ratio: torch.Tensor):
         assert original.shape == generated.shape
@@ -110,4 +146,60 @@ class ReconstructionLoss(nn.Module):
                     use_reentrant=False)
             else:
                 loss += self._calculate_for_scale()(original, generated, s_exp, mask_ratio)
+        return loss
+
+
+class ReconstructionLoss(nn.Module):
+    def __init__(self, sample_rate: int = 16_000, mel_bins=64, gradient_checkpointing: bool = False):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.mel_bins = mel_bins
+        self.gradient_checkpointing = gradient_checkpointing
+        self.epsilon = 1e-6
+
+    def _calculate_for_scale(self):
+        def custom_run(original, generated, s_exp, mask_ratio):
+            s = 2 ** s_exp
+            n_fft = 2 ** 11
+            window_size = s
+            hop_length = int(s / 4)
+            mel_spectrogram = MelSpectrogram(
+                sample_rate=self.sample_rate,
+                win_length=window_size,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                n_mels=self.mel_bins
+            ).to(original.device)
+            orig_audio_spec = mel_spectrogram(original)
+            generated_audio_spec = mel_spectrogram(generated)
+
+            # Ensure all values are positive and greater than epsilon
+            orig_audio_spec = torch.clamp(orig_audio_spec, min=self.epsilon)
+            generated_audio_spec = torch.clamp(generated_audio_spec, min=self.epsilon)
+
+            alpha_s = torch.sqrt(torch.tensor(s) / 2).to(original.device)
+            l1_loss = torch.abs(orig_audio_spec - generated_audio_spec)
+            l1_loss = masked_mean_from_ratios(l1_loss, mask_ratio)
+
+            # Compute log loss safely
+            l2_log_loss = torch.pow(
+                torch.log(orig_audio_spec) - torch.log(generated_audio_spec), exponent=2
+            )
+            l2_log_loss = l2_log_loss.mean(dim=1, keepdim=True)
+            l2_log_loss = torch.sqrt(l2_log_loss)
+            l2_log_loss = masked_mean_from_ratios(l2_log_loss, mask_ratio)
+
+            return l1_loss + alpha_s * l2_log_loss
+
+        return custom_run
+
+    def forward(self, original: torch.Tensor, generated: torch.Tensor, mask_ratio: torch.Tensor):
+        assert original.shape == generated.shape
+        loss = torch.tensor(0., device=original.device, dtype=original.dtype)
+        for s_exp in range(6, 12):
+            calculate_loss = self._calculate_for_scale()(original, generated, s_exp, mask_ratio) if not self.gradient_checkpointing else checkpoint(
+                self._calculate_for_scale(),
+                original, generated, s_exp, mask_ratio,
+                use_reentrant=False)
+            loss += calculate_loss
         return loss

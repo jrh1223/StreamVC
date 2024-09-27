@@ -83,6 +83,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--split", type=str, default="train.clean.100")
+    # parser.add_argument("--split", type=str, default="test.clean")
     parser.add_argument("--shard_length", type=int, default=5000)
     parser.add_argument("--path", type=str, default="./dataset")
     args = parser.parse_args()

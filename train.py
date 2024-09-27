@@ -17,6 +17,8 @@ from streamvc.train.encoder_classifier import EncoderClassifier
 from streamvc.train.data import PreprocessedDataset
 from streamvc.train.loss import GeneratorLoss, DiscriminatorLoss, FeatureLoss, ReconstructionLoss
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 accelerator = Accelerator(log_with="tensorboard",
                           project_config=ProjectConfiguration(
                               project_dir=os.getcwd(),
@@ -27,6 +29,10 @@ NUM_CLASSES = 100
 EMBEDDING_DIMS = 64
 SAMPLES_PER_FRAME = 320
 DEVICE = accelerator.device
+
+if accelerator.is_local_main_process:
+    print(f"Using device: {accelerator.device}")
+
 
 
 def print_time(s):
@@ -43,7 +49,7 @@ def sizeof_fmt(num, suffix="B"):
 
 
 def print_cuda_memory(s):
-    if accelerator.device.type != "cuda":
+    if accelerator.device.type != "cuda:1":
         print_time(s)
         return
     free, total = torch.cuda.mem_get_info()
@@ -179,7 +185,7 @@ def train_content_encoder(content_encoder: nn.Module, args: argparse.Namespace) 
                 outputs = wrapped_content_encoder(batch)
                 outputs_flat = outputs.view(-1, NUM_CLASSES)
                 labels_flat = labels.view(-1)
-                loss = criterion(outputs_flat, labels_flat)
+                loss = criterion(outputs_flat, labels_flat.long())
                 accelerator.backward(loss)
 
                 if args.log_gradient_interval and (global_step + 1) % args.log_gradient_interval == 0:
@@ -193,7 +199,7 @@ def train_content_encoder(content_encoder: nn.Module, args: argparse.Namespace) 
                         "loss/content_encoder": loss.item(),
                         "lr/content_encoder": scheduler.get_last_lr()[0],
                         "allocated_memory": torch.cuda.max_memory_allocated()
-                        if accelerator.device.type == "cuda"
+                        if accelerator.device.type == "cuda:1"
                         else 0
                     },
                     step=global_step)
@@ -230,7 +236,7 @@ def train_content_encoder(content_encoder: nn.Module, args: argparse.Namespace) 
                     },
                     step=global_step)
                 print_time(f"accuracy: {accuracy:.2f}%")
-            if accelerator.device.type == "cuda":
+            if accelerator.device.type == "cuda:1":
                 torch.cuda.reset_peak_memory_stats()
 
             global_step += 1
@@ -415,7 +421,7 @@ def train_streamvc(streamvc_model: StreamVC, args: argparse.Namespace) -> None:
                     "lr/generator": scheduler_generator.get_last_lr()[0],
                     "lr/discriminator": scheduler_discriminator.get_last_lr()[0],
                     "allocated_memory": torch.cuda.max_memory_allocated()
-                    if accelerator.device.type == "cuda"
+                    if accelerator.device.type == "cuda:1"
                     else 0
                 },
                 step=global_step)
@@ -437,7 +443,7 @@ def train_streamvc(streamvc_model: StreamVC, args: argparse.Namespace) -> None:
                         args.checkpoint_path,
                         f"{args.run_name}_discriminator_{epoch}_{step}"
                     ))
-            if accelerator.device.type == "cuda":
+            if accelerator.device.type == "cuda:1":
                 torch.cuda.reset_peak_memory_stats()
 
             global_step += 1
@@ -521,17 +527,17 @@ if __name__ == '__main__':
                         help="Path to the preprocessed test dataset.")
 
     # General hyperparameters.
-    parser.add_argument("--batch-size", type=int, default=24,
+    parser.add_argument("--batch-size", type=int, default=32,
                         help="Batch size for training.")
     parser.add_argument("--limit-num-batches", type=int, default=None,
                         help="Limit the number of batches per epoch. Use None for no limit.")
     parser.add_argument("--limit-batch-samples", type=int, default=16_000 * 10,
                         help="Limit the number of samples for audio signal in the batch.")
-    parser.add_argument("--num-epochs", type=int, default=1,
+    parser.add_argument("--num-epochs", type=int, default=300,
                         help="Number of epochs for training.")
-    parser.add_argument("--lr", type=float, default=4e-3,
+    parser.add_argument("--lr", type=float, default=1e-3,
                         help="Learning rate for the optimizer.")
-    parser.add_argument("--betas", type=float, nargs=2, default=(0.5, 0.9),
+    parser.add_argument("--betas", type=float, nargs=2, default=(0.5, 0.99),
                         help="Beta parameters for the Adam or AdamW optimizer.")
     parser.add_argument("--weight-decay", type=float, default=1e-2,
                         help="Weight decay for the optimizer.")
@@ -581,7 +587,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr-discriminator-multiplier", type=float, default=None,
                         help="Learning rate multiplier for the discriminator, if None than lr is same as generator.")
     # Logs and outputs.
-    parser.add_argument("--model-checkpoint-interval", type=int, default=100,
+    parser.add_argument("--model-checkpoint-interval", type=int, default=1000,
                         help="Interval (in steps) at which to save model checkpoints.")
     parser.add_argument("--accuracy-interval", type=int, default=100,
                         help="Interval (in steps) at which to compute and log accuracy.")
